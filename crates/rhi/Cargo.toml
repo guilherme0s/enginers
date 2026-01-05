@@ -1,0 +1,11 @@
+[package]
+name = "rhi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ash = "0.38.0"
+
+[[example]]
+name = "Triangle"
+path = "examples/triangle.rs"
