@@ -1,7 +1,8 @@
 use rhi::vulkan::Instance;
 
 fn main() -> Result<(), rhi::Error> {
-    let _ = Instance::new()?;
+    let instance = Instance::new()?;
+    let _ = instance.create_device()?;
 
     Ok(())
 }

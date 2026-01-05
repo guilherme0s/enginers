@@ -1,8 +1,10 @@
-use std::ffi::CString;
+use std::{ffi::CString, sync::Arc};
 
 use ash::vk;
 
-pub struct Instance {
+pub struct Instance(Arc<InstanceInner>);
+
+pub(crate) struct InstanceInner {
     _entry: ash::Entry,
     raw: ash::Instance,
     debug_utils: Option<ash::ext::debug_utils::Instance>,
@@ -60,12 +62,56 @@ impl Instance {
 
         let (debug_utils, debug_messenger) = Self::setup_debug_messenger(&entry, &raw)?;
 
-        Ok(Self {
+        let inner = Arc::new(InstanceInner {
             _entry: entry,
             raw,
             debug_utils,
             debug_messenger,
-        })
+        });
+
+        Ok(Self(inner))
+    }
+
+    pub fn create_device(&self) -> Result<super::Device, crate::Error> {
+        let physical_devices = match unsafe { self.0.raw.enumerate_physical_devices() } {
+            Ok(devices) => devices,
+            Err(_) => Vec::new(),
+        };
+        let physical_device = physical_devices[0];
+
+        let queue_families = unsafe {
+            self.0
+                .raw
+                .get_physical_device_queue_family_properties(physical_device)
+        };
+
+        let graphics_queue_family = queue_families
+            .iter()
+            .enumerate()
+            .find(|(_, q)| q.queue_flags.contains(vk::QueueFlags::GRAPHICS))
+            .map(|(i, _)| i as u32)
+            .unwrap();
+
+        let queue_priority = [1.0f32];
+
+        let queue_info = vk::DeviceQueueCreateInfo::default()
+            .queue_family_index(graphics_queue_family)
+            .queue_priorities(&queue_priority);
+
+        let device_features = vk::PhysicalDeviceFeatures::default();
+
+        let create_info = vk::DeviceCreateInfo::default()
+            .queue_create_infos(std::slice::from_ref(&queue_info))
+            .enabled_features(&device_features);
+
+        let raw = unsafe {
+            self.0
+                .raw
+                .create_device(physical_device, &create_info, None)
+                .map_err(|_| crate::Error::Unknown)?
+        };
+
+        Ok(super::Device { raw })
     }
 
     fn setup_debug_messenger(
@@ -97,7 +143,7 @@ impl Instance {
     }
 }
 
-impl Drop for Instance {
+impl Drop for InstanceInner {
     fn drop(&mut self) {
         unsafe {
             if let (Some(utils), Some(messenger)) = (&self.debug_utils, self.debug_messenger) {
