@@ -1,12 +1,19 @@
 use std::{ffi::CString, sync::Arc};
 
 use ash::vk;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 pub struct Instance(Arc<InstanceInner>);
 
 pub(crate) struct InstanceInner {
-    _entry: ash::Entry,
-    raw: ash::Instance,
+    /// Vulkan loader entry point.
+    ///
+    /// This MUST be kept alive for the entire lifetime of the instance, as it contains
+    /// the function pointers that `ash::Instance` uses. If this is dropped first,
+    /// we'd have dangling function pointers.
+    entry: ash::Entry,
+
+    pub(super) raw: ash::Instance,
     debug_utils: Option<ash::ext::debug_utils::Instance>,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
 }
@@ -26,6 +33,9 @@ impl Instance {
             .api_version(vk::API_VERSION_1_3);
 
         let mut extensions = vec![ash::khr::surface::NAME.as_ptr()];
+
+        #[cfg(target_os = "linux")]
+        extensions.push(ash::khr::wayland_surface::NAME.as_ptr());
 
         #[cfg(debug_assertions)]
         extensions.push(ash::ext::debug_utils::NAME.as_ptr());
@@ -63,13 +73,46 @@ impl Instance {
         let (debug_utils, debug_messenger) = Self::setup_debug_messenger(&entry, &raw)?;
 
         let inner = Arc::new(InstanceInner {
-            _entry: entry,
+            entry,
             raw,
             debug_utils,
             debug_messenger,
         });
 
         Ok(Self(inner))
+    }
+
+    pub fn create_surface_from_window<W>(&self, window: &W) -> Result<super::Surface, crate::Error>
+    where
+        W: HasDisplayHandle + HasWindowHandle,
+    {
+        use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+
+        let raw = match (
+            window.display_handle().unwrap().as_raw(),
+            window.window_handle().unwrap().as_raw(),
+        ) {
+            #[cfg(target_os = "linux")]
+            (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(surface)) => {
+                let loader = ash::khr::wayland_surface::Instance::new(&self.0.entry, &self.0.raw);
+
+                let create_info = vk::WaylandSurfaceCreateInfoKHR::default()
+                    .display(display.display.as_ptr())
+                    .surface(surface.surface.as_ptr());
+
+                unsafe {
+                    loader
+                        .create_wayland_surface(&create_info, None)
+                        .map_err(|_| crate::Error::Unknown)?
+                }
+            }
+
+            _ => return Err(crate::Error::Unknown),
+        };
+
+        let loader = ash::khr::surface::Instance::new(&self.0.entry, &self.0.raw);
+
+        Ok(super::Surface { raw, loader })
     }
 
     pub fn create_device(&self) -> Result<super::Device, crate::Error> {
@@ -85,24 +128,27 @@ impl Instance {
                 .get_physical_device_queue_family_properties(physical_device)
         };
 
-        let graphics_queue_family = queue_families
-            .iter()
-            .enumerate()
-            .find(|(_, q)| q.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-            .map(|(i, _)| i as u32)
-            .unwrap();
+        let mut graphics_queue_family = 0;
+        for (i, q) in queue_families.iter().enumerate() {
+            if q.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                graphics_queue_family = i as u32;
+                break;
+            }
+        }
 
         let queue_priority = [1.0f32];
-
         let queue_info = vk::DeviceQueueCreateInfo::default()
             .queue_family_index(graphics_queue_family)
             .queue_priorities(&queue_priority);
 
-        let device_features = vk::PhysicalDeviceFeatures::default();
+        let features = vk::PhysicalDeviceFeatures::default();
+
+        let extensions = vec![ash::khr::swapchain::NAME.as_ptr()];
 
         let create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(std::slice::from_ref(&queue_info))
-            .enabled_features(&device_features);
+            .enabled_extension_names(&extensions)
+            .enabled_features(&features);
 
         let raw = unsafe {
             self.0
@@ -111,7 +157,11 @@ impl Instance {
                 .map_err(|_| crate::Error::Unknown)?
         };
 
-        Ok(super::Device { raw })
+        Ok(super::Device {
+            instance: Arc::clone(&self.0),
+            raw,
+            physical_device,
+        })
     }
 
     fn setup_debug_messenger(
