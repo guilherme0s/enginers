@@ -32,6 +32,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rendering"
+version = "0.1.0"
+dependencies = [
+ "rhi",
+]
+
+[[package]]
 name = "rhi"
 version = "0.1.0"
 dependencies = [
