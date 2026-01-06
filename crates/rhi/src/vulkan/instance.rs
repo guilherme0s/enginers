@@ -1,20 +1,24 @@
 use std::ffi::CStr;
 
 use ash::vk;
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 static VK_LAYER_KHRONOS_VALIDATION_NAME: &CStr =
     unsafe { CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
 
+static WAYLAND_DISPLAY_ENVIRONMENT_VAR_NAME: &str = "WAYLAND_DISPLAY";
+
 pub struct Instance {
     /// Vulkan loader entry point.
     ///
-    /// This MUST be kept alive for the entire lifetime of the instance, as it contains
-    /// the function pointers that `ash::Instance` uses. If this is dropped first,
-    /// we'd have dangling function pointers.
-    #[allow(dead_code)]
-    entry: ash::Entry,
+    /// This MUST outlive `ash::Instance`, because the instance internally
+    /// stores function pointers resolved via this entry.
+    pub(super) entry: ash::Entry,
 
+    /// Vulkan instance handle representing the application's connection
+    /// to the Vulkan driver.
     pub(super) raw: ash::Instance,
+
     debug_utils: Option<ash::ext::debug_utils::Instance>,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
 }
@@ -31,6 +35,23 @@ impl Instance {
             .api_version(vk::API_VERSION_1_3);
 
         let mut extensions = Vec::new();
+
+        #[cfg(target_os = "linux")]
+        {
+            use std::env;
+
+            // Exactly one WSI (window system integration) extension must be enabled,
+            // matching the active display server.
+            extensions.push(
+                if env::var_os(WAYLAND_DISPLAY_ENVIRONMENT_VAR_NAME).is_some() {
+                    ash::khr::wayland_surface::NAME.as_ptr()
+                } else {
+                    ash::khr::xlib_surface::NAME.as_ptr()
+                },
+            );
+        }
+
+        extensions.push(ash::khr::surface::NAME.as_ptr());
 
         #[cfg(debug_assertions)]
         extensions.push(ash::ext::debug_utils::NAME.as_ptr());
@@ -63,6 +84,24 @@ impl Instance {
             debug_utils,
             debug_messenger,
         })
+    }
+
+    pub fn create_surface(
+        &self,
+        display_handle: RawDisplayHandle,
+        window_handle: RawWindowHandle,
+    ) -> Result<super::Surface, crate::Error> {
+        let raw = match (display_handle, window_handle) {
+            #[cfg(target_os = "linux")]
+            (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(surface)) => self
+                .create_surface_from_wayland(display.display.as_ptr(), surface.surface.as_ptr())?,
+
+            _ => return Err(crate::Error::Unknown),
+        };
+
+        let loader = ash::khr::surface::Instance::new(&self.entry, &self.raw);
+
+        Ok(super::Surface { raw, loader })
     }
 
     pub fn create_device(&self) -> Result<super::Device, crate::Error> {
@@ -101,6 +140,7 @@ impl Instance {
             })
             .collect();
 
+        // Priority: Discrete GPU > Integrated GPU > CPU > others
         device_infos.sort_by(|a, b| {
             use vk::PhysicalDeviceType;
 
@@ -122,6 +162,8 @@ impl Instance {
                 std::cmp::Ordering::Greater
             }
         });
+
+        // TODO: Decide whether CPU devices should be excluded entirely.
 
         let chosen_device = device_infos[0].raw;
 
@@ -148,6 +190,7 @@ impl Instance {
             )
             .pfn_user_callback(Some(vulkan_debug_callback));
 
+        // Failure is non-fatal; the engine can run without it.
         let messenger = unsafe { loader.create_debug_utils_messenger(&create_info, None).ok() };
 
         (Some(loader), messenger)

@@ -7,12 +7,12 @@ pub struct Device {
 impl Device {
     pub(super) fn new(
         instance: &super::Instance,
-        physical: vk::PhysicalDevice,
+        physical_device: vk::PhysicalDevice,
     ) -> Result<Self, crate::Error> {
         let queue_families = unsafe {
             instance
                 .raw
-                .get_physical_device_queue_family_properties(physical)
+                .get_physical_device_queue_family_properties(physical_device)
         };
 
         println!("Found {} queue families", queue_families.len());
@@ -30,16 +30,19 @@ impl Device {
             .queue_family_index(graphics_queue_family)
             .queue_priorities(&queue_priority);
 
+        let extensions = [ash::khr::swapchain::NAME.as_ptr()];
+
         let features = vk::PhysicalDeviceFeatures::default();
 
         let create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(std::slice::from_ref(&queue_info))
+            .enabled_extension_names(&extensions)
             .enabled_features(&features);
 
         let raw = unsafe {
             instance
                 .raw
-                .create_device(physical, &create_info, None)
+                .create_device(physical_device, &create_info, None)
                 .map_err(|_| crate::Error::Unknown)?
         };
 
