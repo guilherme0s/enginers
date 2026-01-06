@@ -4,8 +4,10 @@ use ash::vk;
 
 use super::{InstanceInner, Surface, Swapchain};
 
-pub struct Device {
-    pub(crate) instance: Arc<InstanceInner>,
+pub struct Device(pub(super) Arc<DeviceInner>);
+
+pub struct DeviceInner {
+    pub(super) instance: Arc<InstanceInner>,
     pub(super) raw: ash::Device,
     pub(super) physical_device: vk::PhysicalDevice,
 }
@@ -19,14 +21,14 @@ impl Device {
         let capabilities = unsafe {
             surface
                 .loader
-                .get_physical_device_surface_capabilities(self.physical_device, surface.raw)
+                .get_physical_device_surface_capabilities(self.0.physical_device, surface.raw)
                 .map_err(|_| crate::Error::Unknown)?
         };
 
         let formats = unsafe {
             surface
                 .loader
-                .get_physical_device_surface_formats(self.physical_device, surface.raw)
+                .get_physical_device_surface_formats(self.0.physical_device, surface.raw)
                 .map_err(|_| crate::Error::Unknown)?
         };
 
@@ -60,7 +62,7 @@ impl Device {
         }
         image_count = image_count.max(capabilities.min_image_count);
 
-        let loader = ash::khr::swapchain::Device::new(&self.instance.raw, &self.raw);
+        let loader = ash::khr::swapchain::Device::new(&self.0.instance.raw, &self.0.raw);
 
         let create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(surface.raw)
@@ -92,7 +94,7 @@ impl Device {
     }
 }
 
-impl Drop for Device {
+impl Drop for DeviceInner {
     fn drop(&mut self) {
         unsafe {
             self.raw.destroy_device(None);

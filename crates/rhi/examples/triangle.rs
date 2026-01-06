@@ -21,7 +21,7 @@ fn main() -> Result<(), rhi::Error> {
             height: 600,
             image_count: 3,
         },
-    );
+    )?;
 
     Ok(())
 }

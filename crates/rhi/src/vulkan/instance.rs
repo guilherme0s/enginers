@@ -3,6 +3,8 @@ use std::{ffi::CString, sync::Arc};
 use ash::vk;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
+use crate::vulkan::device::DeviceInner;
+
 pub struct Instance(Arc<InstanceInner>);
 
 pub(crate) struct InstanceInner {
@@ -157,11 +159,13 @@ impl Instance {
                 .map_err(|_| crate::Error::Unknown)?
         };
 
-        Ok(super::Device {
+        let inner = Arc::new(DeviceInner {
             instance: Arc::clone(&self.0),
             raw,
             physical_device,
-        })
+        });
+
+        Ok(super::Device(inner))
     }
 
     fn setup_debug_messenger(
