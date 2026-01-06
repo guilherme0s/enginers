@@ -85,12 +85,46 @@ impl Device {
                 .map_err(|_| crate::Error::Unknown)?
         };
 
+        let images = unsafe {
+            loader
+                .get_swapchain_images(raw)
+                .map_err(|_| crate::Error::Unknown)?
+        };
+
+        let image_views = images
+            .iter()
+            .map(|&image| {
+                let info = vk::ImageViewCreateInfo::default()
+                    .image(image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(format.format)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .level_count(1)
+                            .layer_count(1),
+                    );
+
+                unsafe {
+                    self.0
+                        .raw
+                        .create_image_view(&info, None)
+                        .map_err(|_| crate::Error::Unknown)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         println!(
             "Creating new VK swapchain with {:?}, {:?}, num images {}",
             format.format, format.color_space, image_count
         );
 
-        Ok(Swapchain { raw, loader })
+        Ok(Swapchain {
+            raw,
+            loader,
+            image_views,
+            device: Arc::clone(&self.0),
+        })
     }
 }
 
