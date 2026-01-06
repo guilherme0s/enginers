@@ -14,7 +14,7 @@ pub struct Instance {
     #[allow(dead_code)]
     entry: ash::Entry,
 
-    raw: ash::Instance,
+    pub(super) raw: ash::Instance,
     debug_utils: Option<ash::ext::debug_utils::Instance>,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
 }
@@ -40,22 +40,18 @@ impl Instance {
         #[cfg(debug_assertions)]
         instance_layers.push(VK_LAYER_KHRONOS_VALIDATION_NAME.as_ptr());
 
-        let mut create_info = vk::InstanceCreateInfo::default()
+        let create_info = vk::InstanceCreateInfo::default()
             .enabled_extension_names(&extensions)
             .enabled_layer_names(&instance_layers)
             .application_info(&app_info);
 
         let raw = match unsafe { entry.create_instance(&create_info, None) } {
             Ok(raw) => raw,
-            Err(vk::Result::ERROR_LAYER_NOT_PRESENT) => {
-                create_info = create_info.enabled_layer_names(&[]);
-
-                unsafe {
-                    entry
-                        .create_instance(&create_info, None)
-                        .map_err(|_| crate::Error::Unknown)?
-                }
-            }
+            Err(vk::Result::ERROR_LAYER_NOT_PRESENT) => unsafe {
+                entry
+                    .create_instance(&create_info.enabled_layer_names(&[]), None)
+                    .map_err(|_| crate::Error::Unknown)?
+            },
             Err(_) => return Err(crate::Error::Unknown),
         };
 
@@ -67,6 +63,69 @@ impl Instance {
             debug_utils,
             debug_messenger,
         })
+    }
+
+    pub fn create_device(&self) -> Result<super::Device, crate::Error> {
+        let physical_devices = unsafe {
+            self.raw
+                .enumerate_physical_devices()
+                .map_err(|_| crate::Error::Unknown)?
+        };
+
+        if physical_devices.is_empty() {
+            eprintln!(
+                "Could not find a compatible Vulkan device or driver.\n\
+            Make sure your video card supports Vulkan and try updating your video driver."
+            );
+            return Err(crate::Error::Unknown);
+        }
+
+        println!("Found {} physical device(s)", physical_devices.len());
+
+        struct DeviceInfo {
+            raw: vk::PhysicalDevice,
+            device_type: vk::PhysicalDeviceType,
+            original_index: usize,
+        }
+
+        let mut device_infos: Vec<_> = physical_devices
+            .iter()
+            .enumerate()
+            .map(|(index, &device)| {
+                let props = unsafe { self.raw.get_physical_device_properties(device) };
+                DeviceInfo {
+                    raw: device,
+                    device_type: props.device_type,
+                    original_index: index,
+                }
+            })
+            .collect();
+
+        device_infos.sort_by(|a, b| {
+            use vk::PhysicalDeviceType;
+
+            if a.device_type == b.device_type {
+                a.original_index.cmp(&b.original_index)
+            } else if a.device_type == PhysicalDeviceType::DISCRETE_GPU {
+                std::cmp::Ordering::Less
+            } else if b.device_type == PhysicalDeviceType::DISCRETE_GPU {
+                std::cmp::Ordering::Greater
+            } else if a.device_type == PhysicalDeviceType::INTEGRATED_GPU {
+                std::cmp::Ordering::Less
+            } else if b.device_type == PhysicalDeviceType::INTEGRATED_GPU {
+                std::cmp::Ordering::Greater
+            } else if a.device_type == PhysicalDeviceType::CPU {
+                std::cmp::Ordering::Less
+            } else if b.device_type == PhysicalDeviceType::CPU {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        });
+
+        let chosen_device = device_infos[0].raw;
+
+        Ok(super::Device::new(&self, chosen_device)?)
     }
 
     fn setup_debug_messenger(

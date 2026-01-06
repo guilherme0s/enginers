@@ -1,3 +1,6 @@
 [workspace]
 resolver = "3"
 members = ["crates/launcher", "crates/rhi"]
+
+[workspace.dependencies]
+rhi = { path = "crates/rhi" }
