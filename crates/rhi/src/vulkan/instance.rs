@@ -1,4 +1,5 @@
 use std::ffi::CStr;
+use std::sync::Arc;
 
 use ash::vk;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -8,19 +9,26 @@ static VK_LAYER_KHRONOS_VALIDATION_NAME: &CStr =
 
 static WAYLAND_DISPLAY_ENVIRONMENT_VAR_NAME: &str = "WAYLAND_DISPLAY";
 
-pub struct Instance {
+pub(super) struct InstanceInner {
     /// Vulkan loader entry point.
     ///
     /// This MUST outlive `ash::Instance`, because the instance internally
     /// stores function pointers resolved via this entry.
-    pub(super) entry: ash::Entry,
+    pub entry: ash::Entry,
 
     /// Vulkan instance handle representing the application's connection
     /// to the Vulkan driver.
-    pub(super) raw: ash::Instance,
+    pub raw: ash::Instance,
+
+    pub surface_loader: ash::khr::surface::Instance,
 
     debug_utils: Option<ash::ext::debug_utils::Instance>,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
+}
+
+#[derive(Clone)]
+pub struct Instance {
+    pub(super) inner: Arc<InstanceInner>,
 }
 
 impl Instance {
@@ -78,12 +86,17 @@ impl Instance {
 
         let (debug_utils, debug_messenger) = Self::setup_debug_messenger(&entry, &raw);
 
-        Ok(Self {
+        let surface_loader = ash::khr::surface::Instance::new(&entry, &raw);
+
+        let inner = Arc::new(InstanceInner {
             entry,
             raw,
+            surface_loader,
             debug_utils,
             debug_messenger,
-        })
+        });
+
+        Ok(Self { inner })
     }
 
     pub fn create_surface(
@@ -99,14 +112,16 @@ impl Instance {
             _ => return Err(crate::Error::Unknown),
         };
 
-        let loader = ash::khr::surface::Instance::new(&self.entry, &self.raw);
-
-        Ok(super::Surface { raw, loader })
+        Ok(super::Surface {
+            raw,
+            instance: self.inner.clone(),
+        })
     }
 
     pub fn create_device(&self) -> Result<super::Device, crate::Error> {
         let physical_devices = unsafe {
-            self.raw
+            self.inner
+                .raw
                 .enumerate_physical_devices()
                 .map_err(|_| crate::Error::Unknown)?
         };
@@ -131,7 +146,7 @@ impl Instance {
             .iter()
             .enumerate()
             .map(|(index, &device)| {
-                let props = unsafe { self.raw.get_physical_device_properties(device) };
+                let props = unsafe { self.inner.raw.get_physical_device_properties(device) };
                 DeviceInfo {
                     raw: device,
                     device_type: props.device_type,
@@ -167,7 +182,7 @@ impl Instance {
 
         let chosen_device = device_infos[0].raw;
 
-        Ok(super::Device::new(&self, chosen_device)?)
+        Ok(super::Device::new(self.inner.clone(), chosen_device)?)
     }
 
     fn setup_debug_messenger(
@@ -197,7 +212,7 @@ impl Instance {
     }
 }
 
-impl Drop for Instance {
+impl Drop for InstanceInner {
     fn drop(&mut self) {
         unsafe {
             if let (Some(utils), Some(messenger)) = (&self.debug_utils, self.debug_messenger) {

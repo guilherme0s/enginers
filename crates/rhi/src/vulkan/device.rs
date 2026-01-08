@@ -1,12 +1,18 @@
+use std::sync::Arc;
+
 use ash::vk;
 
+use super::instance::InstanceInner;
+
 pub struct Device {
-    raw: ash::Device,
+    #[allow(dead_code)]
+    pub(super) instance: Arc<InstanceInner>,
+    pub(super) raw: ash::Device,
 }
 
 impl Device {
     pub(super) fn new(
-        instance: &super::Instance,
+        instance: Arc<InstanceInner>,
         physical_device: vk::PhysicalDevice,
     ) -> Result<Self, crate::Error> {
         let queue_families = unsafe {
@@ -46,7 +52,7 @@ impl Device {
                 .map_err(|_| crate::Error::Unknown)?
         };
 
-        Ok(Self { raw })
+        Ok(Self { instance, raw })
     }
 }
 
