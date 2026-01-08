@@ -134,8 +134,6 @@ impl Instance {
             return Err(crate::Error::Unknown);
         }
 
-        println!("Found {} physical device(s)", physical_devices.len());
-
         struct DeviceInfo {
             raw: vk::PhysicalDevice,
             device_type: vk::PhysicalDeviceType,
