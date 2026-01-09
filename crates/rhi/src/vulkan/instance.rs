@@ -4,9 +4,11 @@ use std::sync::Arc;
 use ash::vk;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
+/// Canonical name of the Khronos validation layer.
 static VK_LAYER_KHRONOS_VALIDATION_NAME: &CStr =
     unsafe { CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
 
+/// Environment variable used to detect a Wayland session on Linux.
 static WAYLAND_DISPLAY_ENVIRONMENT_VAR_NAME: &str = "WAYLAND_DISPLAY";
 
 pub(super) struct InstanceInner {
@@ -33,12 +35,12 @@ pub struct Instance {
 
 impl Instance {
     pub fn new() -> Result<Self, crate::Error> {
-        let entry = unsafe { ash::Entry::load().unwrap() };
+        let entry = unsafe { ash::Entry::load().map_err(|_| crate::Error::Unknown)? };
 
         let app_info = vk::ApplicationInfo::default()
-            .application_name(CStr::from_bytes_with_nul(b"\0").unwrap())
+            .application_name(c"")
             .application_version(0)
-            .engine_name(CStr::from_bytes_with_nul(b"\0").unwrap())
+            .engine_name(c"")
             .engine_version(0)
             .api_version(vk::API_VERSION_1_3);
 
@@ -48,8 +50,8 @@ impl Instance {
         {
             use std::env;
 
-            // Exactly one WSI (window system integration) extension must be enabled,
-            // matching the active display server.
+            // Detect active display server and load appropriate WSI extension
+            // Only one WSI extension can be enabled at a time
             extensions.push(
                 if env::var_os(WAYLAND_DISPLAY_ENVIRONMENT_VAR_NAME).is_some() {
                     ash::khr::wayland_surface::NAME.as_ptr()

@@ -7,6 +7,9 @@ edition = "2024"
 ash = "0.38.0"
 raw-window-handle = "0.6.2"
 
+[dev-dependencies]
+winit = "0.29"
+
 [[example]]
 name = "triangle"
 path = "examples/triangle.rs"
