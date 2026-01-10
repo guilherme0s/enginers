@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use super::instance::InstanceInner;
+use crate::RHIDevice;
+
+use super::{CommandEncoder, instance::InstanceInner};
 
 pub struct Swapchain {
     raw: vk::SwapchainKHR,
@@ -13,6 +15,8 @@ pub struct Device {
     instance: Arc<InstanceInner>,
     raw: ash::Device,
     graphics_queue_family: u32,
+    #[allow(unused)]
+    graphics_queue: vk::Queue,
     physical_device: vk::PhysicalDevice,
     swapchain_loader: ash::khr::swapchain::Device,
 }
@@ -57,76 +61,18 @@ impl Device {
                 .map_err(|_| crate::Error::Unknown)?
         };
 
+        let graphics_queue = unsafe { raw.get_device_queue(graphics_queue_family, 0) };
+
         let swapchain_loader = ash::khr::swapchain::Device::new(&instance.raw, &raw);
 
         Ok(Self {
             instance,
             raw,
             graphics_queue_family,
+            graphics_queue,
             physical_device,
             swapchain_loader,
         })
-    }
-
-    pub fn command_pool_create(&self) -> Result<vk::CommandPool, crate::Error> {
-        let cmd_pool_info = vk::CommandPoolCreateInfo::default()
-            .queue_family_index(self.graphics_queue_family)
-            .flags(vk::CommandPoolCreateFlags::empty());
-
-        let vk_command_pool = unsafe {
-            self.raw
-                .create_command_pool(&cmd_pool_info, None)
-                .map_err(|_| crate::Error::Unknown)?
-        };
-
-        Ok(vk_command_pool)
-    }
-
-    pub fn command_pool_destroy(&self, cmd_pool: vk::CommandPool) {
-        unsafe {
-            self.raw.destroy_command_pool(cmd_pool, None);
-        }
-    }
-
-    pub fn command_buffer_allocate(
-        &self,
-        cmd_pool: vk::CommandPool,
-    ) -> Result<vk::CommandBuffer, crate::Error> {
-        let cmd_buf_alloc_info = vk::CommandBufferAllocateInfo::default()
-            .command_pool(cmd_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
-
-        let vk_command_buffer = unsafe {
-            self.raw
-                .allocate_command_buffers(&cmd_buf_alloc_info)
-                .map_err(|_| crate::Error::Unknown)?
-        }[0];
-
-        Ok(vk_command_buffer)
-    }
-
-    pub fn command_buffer_begin(&self, cmd_buf: vk::CommandBuffer) -> Result<(), crate::Error> {
-        let cmd_buf_begin_info = vk::CommandBufferBeginInfo::default()
-            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-        unsafe {
-            self.raw
-                .begin_command_buffer(cmd_buf, &cmd_buf_begin_info)
-                .map_err(|_| crate::Error::Unknown)?
-        };
-
-        Ok(())
-    }
-
-    pub fn command_buffer_end(&self, cmd_buf: vk::CommandBuffer) -> Result<(), crate::Error> {
-        unsafe {
-            self.raw
-                .end_command_buffer(cmd_buf)
-                .map_err(|_| crate::Error::Unknown)?
-        };
-
-        Ok(())
     }
 
     pub fn swapchain_create(
@@ -260,6 +206,48 @@ impl Device {
 
             self.swapchain_loader.destroy_swapchain(swapchain.raw, None);
         }
+    }
+}
+
+impl RHIDevice for Device {
+    type CommandEncoder = CommandEncoder;
+
+    fn create_command_encoder(&self) -> Result<Self::CommandEncoder, crate::Error> {
+        let cmd_pool_info = vk::CommandPoolCreateInfo::default()
+            .queue_family_index(self.graphics_queue_family)
+            .flags(vk::CommandPoolCreateFlags::empty());
+
+        let cmd_pool = unsafe {
+            self.raw
+                .create_command_pool(&cmd_pool_info, None)
+                .map_err(|_| crate::Error::Unknown)?
+        };
+
+        let cmd_buffer_alloc_info = vk::CommandBufferAllocateInfo::default()
+            .command_pool(cmd_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+
+        let cmd_buffer = unsafe {
+            self.raw
+                .allocate_command_buffers(&cmd_buffer_alloc_info)
+                .map_err(|_| crate::Error::Unknown)?
+        }[0];
+
+        let cmd_buffer_begin_info = vk::CommandBufferBeginInfo::default()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+        unsafe {
+            self.raw
+                .begin_command_buffer(cmd_buffer, &cmd_buffer_begin_info)
+                .map_err(|_| crate::Error::Unknown)?
+        };
+
+        Ok(CommandEncoder {
+            cmd_pool,
+            cmd_buffer,
+            device: self.raw.clone(),
+        })
     }
 }
 

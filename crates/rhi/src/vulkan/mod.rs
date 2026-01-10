@@ -1,8 +1,11 @@
-pub mod instance;
+mod instance;
 pub use instance::Instance;
 
-pub mod device;
+mod device;
 pub use device::Device;
 
-pub mod surface;
+mod surface;
 pub use surface::Surface;
+
+mod command;
+pub use command::{CommandEncoder, CommandEncoderRenderPass};
